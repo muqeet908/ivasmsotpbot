@@ -1,71 +1,138 @@
-import requests
-from bs4 import BeautifulSoup
 import time
 import re
+import cloudscraper
+from bs4 import BeautifulSoup
+from telegram import Bot
+
+# ==========================
+# CONFIG
+# ==========================
 
 EMAIL = "muqueetyt@gmail.com"
 PASSWORD = "Usatiktok1$"
 
 BOT_TOKEN = "8733336332:AAFlW2wMsYJPhhl08b7_Hzb6ZP4TUIAqGCk"
-CHAT_ID = "-1003622434067"
+GROUP_ID = "-1003622434067"
 
 LOGIN_URL = "https://ivasms.com/login"
-SMS_URL = "https://ivasms.com/portal/test_sms_history"
+SMS_URL = "https://www.ivasms.com/portal/live/my_sms"
 
-session = requests.Session()
+CHECK_DELAY = 5
+
+bot = Bot(token=BOT_TOKEN)
+
+scraper = cloudscraper.create_scraper(
+    browser={
+        "browser": "chrome",
+        "platform": "android",
+        "mobile": True
+    }
+)
+
 sent_messages = set()
 
-
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
-
+# ==========================
+# LOGIN SYSTEM
+# ==========================
 
 def login():
-    data = {
+    print("🔐 Logging in...")
+
+    scraper.get(LOGIN_URL)
+
+    payload = {
         "email": EMAIL,
         "password": PASSWORD
     }
-    session.post(LOGIN_URL, data=data)
-    print("Logged in")
+
+    r = scraper.post(LOGIN_URL, data=payload)
+
+    if "dashboard" in r.text.lower():
+        print("✅ Login Successful")
+        return True
+
+    print("❌ Login Failed")
+    return False
 
 
-def extract_otp(text):
-    otp = re.findall(r"\b\d{4,6}\b", text)
-    return otp[0] if otp else None
+# ==========================
+# OTP EXTRACTOR
+# ==========================
 
+def find_otps(text):
+
+    otps = re.findall(r"\b\d{4,8}\b", text)
+    return list(set(otps))
+
+
+# ==========================
+# MESSAGE FORMATTER
+# ==========================
+
+def format_message(sender, otp):
+
+    return f"""
+✨ <b>NEW OTP RECEIVED</b>
+
+📱 <b>Sender:</b> {sender}
+🔐 <b>OTP Code:</b> <code>{otp}</code>
+
+⚡ Auto Forwarded
+🌐 IVASMS Panel
+"""
+
+
+# ==========================
+# SMS CHECKER
+# ==========================
 
 def check_sms():
-    r = session.get(SMS_URL)
-    soup = BeautifulSoup(r.text, "html.parser")
 
-    rows = soup.find_all("tr")
+    global sent_messages
 
-    for row in rows:
-        text = row.text.strip()
+    r = scraper.get(SMS_URL)
 
-        # avoid duplicate forwarding
-        if text in sent_messages:
+    # session expired
+    if "login" in r.url.lower():
+        print("♻ Session expired → Relogin")
+        login()
+        return
+
+    soup = BeautifulSoup(r.text, "lxml")
+
+    page_text = soup.get_text()
+
+    otps = find_otps(page_text)
+
+    for otp in otps:
+
+        if otp in sent_messages:
             continue
 
-        otp = extract_otp(text)
+        sent_messages.add(otp)
 
-        if otp:
-            sent_messages.add(text)
+        message = format_message("Unknown", otp)
 
-            send_telegram(
-                f"📩 NEW OTP RECEIVED\n\n{text}"
-            )
+        bot.send_message(
+            chat_id=GROUP_ID,
+            text=message,
+            parse_mode="HTML"
+        )
 
+        print("✅ OTP Forwarded:", otp)
+
+
+# ==========================
+# MAIN LOOP
+# ==========================
 
 login()
 
 while True:
     try:
         check_sms()
-        time.sleep(20)
+        time.sleep(CHECK_DELAY)
 
     except Exception as e:
-        print("Error:", e)
-        login()
-        time.sleep(10)
+        print("⚠ ERROR:", e)
+        time.sleep(15)
