@@ -1,2 +1,4 @@
-requests
+cloudscraper
 beautifulsoup4
+python-telegram-bot==13.15
+lxml
